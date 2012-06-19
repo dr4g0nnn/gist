@@ -42,6 +42,7 @@ module Gist
   # Parses command line arguments and does what needs to be done.
   def execute(*args)
     private_gist = defaults["private"]
+    anonymous_gist = false
     gist_filename = nil
     gist_extension = defaults["extension"]
     browse_enabled = defaults["browse"]
@@ -59,6 +60,10 @@ module Gist
 
       opts.on('-p', '--[no-]private', 'Make the gist private') do |priv|
         private_gist = priv
+      end
+
+      opts.on('-a', '--anonymous', 'Create an anonymous gist') do |anon|
+        anonymous_gist = anon
       end
 
       t_desc = 'Set syntax highlighting of the Gist by file extension'
@@ -130,7 +135,7 @@ module Gist
         files = [{:input => input, :extension => gist_extension}]
       end
 
-      url = write(files, private_gist, description, update_to)
+      url = write(files, private_gist, description, update_to, anonymous_gist)
       browse(url) if browse_enabled
       puts copy(url)
     rescue => e
@@ -140,7 +145,7 @@ module Gist
   end
 
   # Create a gist on gist.github.com
-  def write(files, private_gist = false, description = nil, update_to=nil)
+  def write(files, private_gist = false, description = nil, update_to=nil, anonymous_gist = false)
     url = URI.parse(CREATE_URL + (update_to ? "/#{update_to}" : ""))
 
     if PROXY_HOST
@@ -157,9 +162,11 @@ module Gist
     req = Net::HTTP::Post.new(url.path)
     req.body = JSON.generate(data(files, private_gist, description))
 
-    user, password = auth()
-    if user && password
-      req.basic_auth(user, password)
+    unless anonymous_gist
+      user, password = auth()
+      if user && password
+        req.basic_auth(user, password)
+      end
     end
 
     response = http.start{|h| h.request(req) }
