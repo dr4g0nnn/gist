@@ -47,6 +47,7 @@ module Gist
     browse_enabled = defaults["browse"]
     read_mode = false
     description = nil
+    update_to = nil
 
     opts = OptionParser.new do |opts|
       opts.banner = "Usage: gist [options] [filename or stdin] [filename] ...\n" +
@@ -67,6 +68,9 @@ module Gist
 
       opts.on('-d','--description DESCRIPTION', 'Set description of the new gist') do |d|
         description = d
+      end
+      opts.on('-u', '--update GIST_ID', 'Update an already existing gist') do |i|
+        update_to = i
       end
 
       opts.on('-o','--[no-]open', 'Open gist in browser') do |o|
@@ -126,7 +130,7 @@ module Gist
         files = [{:input => input, :extension => gist_extension}]
       end
 
-      url = write(files, private_gist, description)
+      url = write(files, private_gist, description, update_to)
       browse(url) if browse_enabled
       puts copy(url)
     rescue => e
@@ -136,8 +140,8 @@ module Gist
   end
 
   # Create a gist on gist.github.com
-  def write(files, private_gist = false, description = nil)
-    url = URI.parse(CREATE_URL)
+  def write(files, private_gist = false, description = nil, update_to=nil)
+    url = URI.parse(CREATE_URL + (update_to ? "/#{update_to}" : ""))
 
     if PROXY_HOST
       proxy = Net::HTTP::Proxy(PROXY_HOST, PROXY_PORT)
@@ -160,7 +164,7 @@ module Gist
 
     response = http.start{|h| h.request(req) }
     case response
-    when Net::HTTPCreated
+    when Net::HTTPCreated, Net::HTTPOK
       JSON.parse(response.body)['html_url']
     else
       puts "Creating gist failed: #{response.code} #{response.message}"
