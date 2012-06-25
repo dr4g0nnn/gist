@@ -2,6 +2,7 @@ require 'open-uri'
 require 'net/https'
 require 'optparse'
 
+require 'cgi'
 require 'base64'
 
 require 'gist/json'    unless defined?(JSON)
@@ -23,11 +24,17 @@ require 'gist/version' unless defined?(Gist::Version)
 #
 #   >> Gist.browse(url)
 #   Opens URL in your default browser.
+#
+#   >> Gist.login!
+#   Fetches an OAuth token for allow for gisting.
 module Gist
   extend self
 
+  CONFIG_FILE = '~/.gist'
+
   GIST_URL   = 'https://api.github.com/gists/%s'
   CREATE_URL = 'https://api.github.com/gists'
+  OAUTH_URL = 'https://api.github.com/authorizations'
 
   if ENV['HTTPS_PROXY']
     PROXY = URI(ENV['HTTPS_PROXY'])
@@ -66,6 +73,11 @@ module Gist
 
       opts.on('-o','--[no-]open', 'Open gist in browser') do |o|
         browse_enabled = o
+      end
+
+      opts.on('-l', '--login', 'Set up an OAuth token.') do
+        Gist.login!
+        exit
       end
 
       opts.on('-m', '--man', 'Print manual') do
@@ -124,7 +136,13 @@ module Gist
 
   # Create a gist on gist.github.com
   def write(files, private_gist = false, description = nil)
-    url = URI.parse(CREATE_URL)
+    access_token = (File.read(File.expand_path(CONFIG_FILE)) rescue nil)
+
+    url = CREATE_URL
+    if access_token.to_s != ''
+      url << "?access_token=" << CGI.escape(access_token)
+    end
+    url = URI.parse(url)
 
     if PROXY_HOST
       proxy = Net::HTTP::Proxy(PROXY_HOST, PROXY_PORT)
@@ -137,13 +155,8 @@ module Gist
     http.verify_mode = OpenSSL::SSL::VERIFY_PEER
     http.ca_file = ca_cert
 
-    req = Net::HTTP::Post.new(url.path)
+    req = Net::HTTP::Post.new(url.to_s)
     req.body = JSON.generate(data(files, private_gist, description))
-
-    user, password = auth()
-    if user && password
-      req.basic_auth(user, password)
-    end
 
     response = http.start{|h| h.request(req) }
     case response
@@ -190,6 +203,56 @@ module Gist
     end
 
     content
+  end
+
+  # Log the user into jist.
+  #
+  # This method asks the user for a username and password, and tries to obtain
+  # and OAuth2 access token, which is then stored in ~/.jist
+  def login!
+    puts "Obtaining OAuth2 access_token from github."
+    print "Github username: "
+    username = $stdin.gets.strip
+    print "Github password: "
+    password = begin
+      `stty -echo` rescue nil
+      $stdin.gets.strip
+    ensure
+      `stty echo` rescue nil
+    end
+    puts ""
+
+    url = URI.parse(OAUTH_URL)
+
+    if PROXY_HOST
+      proxy = Net::HTTP::Proxy(PROXY_HOST, PROXY_PORT)
+      http  = proxy.new(url.host, url.port)
+    else
+      http = Net::HTTP.new(url.host, url.port)
+    end
+
+    http.use_ssl = true
+    http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+    http.ca_file = ca_cert
+
+    req = Net::HTTP::Post.new(OAUTH_URL)
+    req.body = JSON.generate({
+      :scopes => [:gist],
+      :note => "gist cli",
+    })
+
+    req.basic_auth(username, password)
+
+    response = http.start{|h| h.request(req)}
+
+    if Net::HTTPCreated === response
+      File.open(File.expand_path(CONFIG_FILE), 'w') do |f|
+        f.write JSON.parse(response.body)['token']
+      end
+      puts "Success! https://github.com/settings/applications"
+    else
+      raise RuntimeError.new "Got #{response.class} from gist: #{response.body}"
+    end
   end
 
 private
